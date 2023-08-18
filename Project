@@ -1,0 +1,1590 @@
+#include <iostream>
+#include <glad/glad.h>
+#include <GLFW/glfw3.h> 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include <camera.h>
+#include <string>
+#include <cmath>
+#include <vector>
+
+
+#ifdef __APPLE__
+#include <GLUT/glut.h>
+#else
+#include <GL/glut.h>
+#endif
+
+using namespace std; // Uses the standard namespace
+/*Shader program Macro*/
+#ifndef GLSL 
+#define GLSL(Version, Source) "#version " #Version " core \n" #Source 
+#endif
+
+// Unnamed namespace
+namespace
+{
+    const char* const WINDOW_TITLE = "Li, 7-1 Project"; // Macro for window title
+
+    // Variables for window width and height
+    const int SCR_WIDTH = 2000;
+    const int SCR_HEIGHT = 1800;
+
+    // stores the GL data relative given mesh 
+    struct GLMesh
+    {
+        // Handle for the vertex array object
+        GLuint centerVao;
+        GLuint rightVao;
+        GLuint leftVao;
+        GLuint planeVao;
+        GLuint cylVao;
+        GLuint candleVao;
+        GLuint handleVao;
+        GLuint handle2Vao;
+        GLuint sphereVao;
+        GLuint barVao;
+        // Handles for the vertex buffer objects
+        GLuint planeVbos;
+        GLuint candleVbos;
+        GLuint centerVbos;
+        GLuint rightVbos;
+        GLuint leftVbos;
+        GLuint cylVbos[2];
+        GLuint handleVbos[2];
+        GLuint handle2Vbos;
+        GLuint sphereVbos[2];
+        GLuint barVbos;
+        // Number of indices of the mesh
+        GLuint cIndices;
+        GLuint pvertices;
+        GLuint cyIndices;
+        GLuint canvertices;
+        GLuint sIndices;
+
+    };
+
+    // Main GLFW window
+    GLFWwindow* gWindow = nullptr;
+    // mesh data
+    GLMesh gMesh;
+    // Texture id
+    GLuint gTextureFloor;
+    GLuint gTextureWhite;
+    GLuint gTextureTealL;
+    GLuint gTextureTealR;
+    GLuint gTextureCan;
+    GLuint gTextureWhiteCup;
+    GLuint gTextureWhiteH;
+    GLuint gTextureYellowDots;
+
+    glm::vec2 gUVScale(1.0f, 1.0f);
+    GLint gTexWrapMode = GL_REPEAT;
+
+    // Shader program
+    GLuint gProgramId;
+    GLuint gLampProgramId;
+
+    // camera
+    Camera gCamera(glm::vec3(0.0f, 8.0f, 40.0f));
+    float gLastX = SCR_WIDTH / 2.0f;
+    float gLastY = SCR_HEIGHT / 2.0f;
+    bool gFirstMouse = true;
+
+    // timing
+    float gDeltaTime = 0.0f; // time between current frame and last frame
+    float gLastFrame = 0.0f;
+
+    // Subject position and scale
+    glm::vec3 gObjectPosition(0.0f, 5.0f, 0.0f);
+    glm::vec3 gObectScale(1.0f);
+
+    // Cube and light color
+    glm::vec3 gObjectColor(0.6f, 0.5f, 5.75f);
+    //glm::vec3 gObjectColor(1.f, 0.2f, 0.0f);
+    glm::vec3 gLightColor(0.5f, 0.5f, 0.5f);
+
+    // Light position and scale
+    glm::vec3 gLightPosition(0.0f, 15.0f, -5.0f);
+    glm::vec3 gLightScale(0.3f);
+
+}
+const double PI = 3.1415926f;
+const float toRadians = PI / 180.0f;
+
+
+// define functions
+bool initialize(int, char* [], GLFWwindow** window);
+void framebuffer_size_callback(GLFWwindow* window, int width, int height); // viewpoint, redraw graphic on the window when resized
+void processInput(GLFWwindow* window); // glfwSetWindowShouldClose
+void UCreateMesh(GLMesh& mesh);
+void destroyMesh(GLMesh& mesh);
+void URender();
+bool UCreateShaderProgram(const char* vtxShaderSource, const char* fragShaderSource, GLuint& programId);
+void UDestroyShaderProgram(GLuint programId);
+void UMousePositionCallback(GLFWwindow* window, double xpos, double ypos);
+void UMouseScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+void UMouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+bool UCreateTexture(const char* filename, GLuint& textureId);
+void UDestroyTexture(GLuint textureId);
+void drawEraserCase();
+void drawCup();
+void drawCandle();
+void drawSphere();
+void cylinderFunc(GLMesh& mesh);
+void sphereFunc(GLMesh& mesh);
+
+
+// Vertex Shader Program Source Code
+/* Vertex Shader Source Code*/
+const GLchar* vertexShaderSource = GLSL(440,
+    layout(location = 0) in vec3 position;
+layout(location = 1) in vec3 normal;
+layout(location = 2) in vec2 textureCoordinate;
+
+out vec3 vertexFragmentPos; // For outgoing color / pixels to fragment shader
+out vec3 vertexNormal; // For outgoing normals to fragment shader
+out vec2 vertexTextureCoordinate;
+
+//Global variables for the transform matrices
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+void main()
+{
+
+    vertexFragmentPos = vec3(model * vec4(position, 1.0f)); // Gets fragment / pixel position in world space only (exclude view and projection)
+    vertexNormal = mat3(transpose(inverse(model))) * normal; // get normal vectors in world space only and exclude normal translation properties
+    vertexTextureCoordinate = textureCoordinate;
+
+    gl_Position = projection * view * model * vec4(position, 1.0f); // transforms vertices to clip coordinates
+}
+);
+
+/* Fragment Shader Source Code*/
+const GLchar* fragmentShaderSource = GLSL(440,
+
+    in vec3 vertexFragmentPos; // For incoming fragment position
+in vec3 vertexNormal; // For incoming normals
+in vec2 vertexTextureCoordinate;
+
+out vec4 fragmentColor; // For outgoing cube color to the GPU
+
+// Uniform / Global variables for object color, light color, light position, and camera/view position
+uniform vec3 objectColor;
+uniform vec3 lightColor;
+uniform vec3 lightPos;
+uniform vec3 viewPosition;
+uniform sampler2D uTexture; // Useful when working with multiple textures
+uniform vec2 uvScale;
+
+void main()
+{
+    /* phong lighting model calculation to generate ambient, diffuse and specular components*/
+
+  //Calculate Ambient lighting*/
+    float ambientStrength = 2.0f; // Set ambient or global lighting strength
+    vec3 ambient = ambientStrength * lightColor; // Generate ambient light color
+
+    //Calculate Diffuse lighting*/
+    vec3 norm = normalize(vertexNormal); // Normalize vectors to 1 unit
+    vec3 lightDirection = normalize(lightPos - vertexFragmentPos); // Calculate distance (light direction) between light source and fragments/pixels on cube
+    float impact = max(dot(norm, lightDirection), 0.0);// Calculate diffuse impact by generating dot product of normal and light
+    vec3 diffuse = impact * lightColor; // Generate diffuse light color
+
+    //Calculate Specular lighting*/
+    float specularIntensity = 0.2f; // Set specular light strength
+    float highlightSize = 0.75f; // Set specular highlight size
+    vec3 viewDir = normalize(viewPosition - vertexFragmentPos); // Calculate view direction
+    vec3 reflectDir = reflect(-lightDirection, norm);// Calculate reflection vector
+    //Calculate specular component
+    float specularComponent = pow(max(dot(viewDir, reflectDir), 0.0), highlightSize);
+    vec3 specular = specularIntensity * specularComponent * lightColor;
+
+    // Texture holds the color to be used for all three components
+    vec4 textureColor = texture(uTexture, vertexTextureCoordinate * uvScale);
+
+    // Calculate phong result
+    vec3 phong = (ambient + diffuse + specular) * textureColor.xyz;
+
+    fragmentColor = vec4(phong, 1.0); // Send lighting results to GPU
+}
+);
+/* Lamp Shader Source Code*/
+const GLchar* lampVertexShaderSource = GLSL(440,
+
+    layout(location = 0) in vec3 position; // VAP position 0 for vertex position data
+
+//Uniform / Global variables for the  transform matrices
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+void main()
+{
+    gl_Position = projection * view * model * vec4(position, 1.0f); // Transforms vertices into clip coordinates
+}
+);
+
+
+/* Fragment Shader Source Code*/
+const GLchar* lampFragmentShaderSource = GLSL(440,
+
+    out vec4 fragmentColor; // For outgoing lamp color (smaller cube) to the GPU
+
+void main()
+{
+    fragmentColor = vec4(1.0f); // Set color to white (1.0f,1.0f,1.0f) with alpha 1.0
+}
+);
+
+// Images are loaded with Y axis going down, but OpenGL's Y axis goes up, so let's flip it
+void flipImageVertically(unsigned char* image, int width, int height, int channels)
+{
+    for (int j = 0; j < height / 2; ++j)
+    {
+        int index1 = j * width * channels;
+        int index2 = (height - 1 - j) * width * channels;
+
+        for (int i = width * channels; i > 0; --i)
+        {
+            unsigned char tmp = image[index1];
+            image[index1] = image[index2];
+            image[index2] = tmp;
+            ++index1;
+            ++index2;
+        }
+    }
+}
+void sphereFunc(GLMesh& mesh) {
+
+    std::vector<GLfloat> vertices;
+    std::vector<GLfloat> normals;
+    std::vector<GLfloat> texCoords;
+    std::vector<uint32_t> indices;
+
+    GLfloat r = 1.0f;
+    GLfloat sectors = 15;
+    GLfloat stacks = 8;
+    GLfloat x, y, z, xy;                              // vertex position
+    GLfloat nx, ny, nz, lengthInv = 1.0f / r;    // vertex normal
+    GLfloat s, t;                                     // vertex texCoord
+
+    GLfloat sectorStep = 2 * PI / sectors;
+    GLfloat stackStep = PI / stacks;
+    GLfloat sectorAngle, stackAngle;
+
+    for (uint32_t i = 0; i <= stacks; ++i)
+    {
+        stackAngle = PI / 2 - i * stackStep;        // starting from pi/2 to -pi/2
+        xy = r * cosf(stackAngle);             // r * cos(u)
+        z = r * sinf(stackAngle);              // r * sin(u)
+
+        int k1 = i * (sectors + 1);     // beginning of current stack
+        int k2 = k1 + sectors + 1;
+        // add (sectorCount+1) vertices per stack
+        // the first and last vertices have same position and normal, but different tex coords
+        for (uint32_t j = 0; j <= sectors; ++j)
+        {
+            sectorAngle = j * sectorStep;           // starting from 0 to 2pi
+
+            // vertex position (x, y, z)
+            x = xy * cosf(sectorAngle);             // r * cos(u) * cos(v)
+            y = xy * sinf(sectorAngle);             // r * cos(u) * sin(v)
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+
+            // normalized vertex normal (nx, ny, nz)
+            nx = x * lengthInv;
+            ny = y * lengthInv;
+            nz = z * lengthInv;
+            normals.push_back(nx);
+            normals.push_back(ny);
+            normals.push_back(nz);
+
+            // vertex tex coord (s, t) range between [0, 1]
+            s = (float)j / sectors;
+            t = (float)i / stacks;
+            texCoords.push_back(s);
+            texCoords.push_back(t);
+        }
+
+        for (uint32_t i = 0; i < stacks; ++i)
+        {
+            k1 = i * (sectors + 1);     // beginning of current stack
+            k2 = k1 + sectors + 1;      // beginning of next stack
+
+            for (uint32_t j = 0; j < sectors; ++j, ++k1, ++k2)
+            {
+                // 2 triangles per sector excluding first and last stacks
+                // k1 => k2 => k1+1
+                if (i != 0)
+                {
+                    indices.push_back(k1);
+                    indices.push_back(k2);
+                    indices.push_back(k1 + 1);
+                }
+
+                // k1+1 => k2 => k2+1
+                if (i != (stacks - 1))
+                {
+                    indices.push_back(k1 + 1);
+                    indices.push_back(k2);
+                    indices.push_back(k2 + 1);
+                }
+            }
+        }
+    }
+
+    constexpr std::size_t ARRAY_SZ = 2000;
+
+    static GLfloat sphereVerts[ARRAY_SZ]{};
+    for (uint32_t i = 0; i < vertices.size(); i++) {
+        sphereVerts[i] = vertices[i];
+    }
+    static GLshort sphereindices[ARRAY_SZ]{};
+    for (uint32_t i = 0; i < indices.size(); i++) {
+        sphereindices[i] = indices[i];
+    }
+    /*********************************************/
+      // Creates the Vertex Attribute Pointer for the screen coordinates
+    const GLuint floatsPerVertex = 3; // Number of coordinates per vertex
+    const GLuint floatsPerNormal = 3;
+    const GLuint floatsPerUV = 2;
+
+    // Strides between vertex coordinates is 6 (x, y, r, g, b, a). A tightly packed stride is 0.
+    GLint stride1 = sizeof(float) * (floatsPerVertex);
+    GLint strideTex = sizeof(float) * (floatsPerVertex + floatsPerUV);
+    GLint strideNor = sizeof(float) * (floatsPerVertex + floatsPerNormal);
+
+    // Sphere
+
+    glGenVertexArrays(1, &mesh.sphereVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.sphereVao);
+
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(2, mesh.sphereVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.sphereVbos[0]); // Activates the buffer  
+    glBufferData(GL_ARRAY_BUFFER, sizeof(sphereVerts), sphereVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU  
+
+    mesh.sIndices = sizeof(sphereindices) / sizeof(sphereindices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.sphereVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(sphereindices), sphereindices, GL_STATIC_DRAW);
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride1, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, strideNor, (void*)(sizeof(float) * floatsPerNormal));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride1, (void*)(sizeof(float) * floatsPerUV));
+    glEnableVertexAttribArray(2);
+
+}
+void cylinderFunc(GLMesh& mesh) {
+
+    GLfloat r = .75;
+    GLfloat sectorAngle;
+    GLfloat height = 2.0f;
+    GLfloat sectorCount = 20;
+    GLfloat sectorStep = 2 * PI / sectorCount;
+
+    std::vector<GLfloat> unitCircleVertices;
+
+    for (int i = 0; i <= sectorCount; ++i)
+    {
+        sectorAngle = i * sectorStep;
+        unitCircleVertices.push_back(cos(sectorAngle)); // x
+        unitCircleVertices.push_back(sin(sectorAngle)); // y
+        unitCircleVertices.push_back(0);                // z
+    }
+
+    std::vector<GLfloat> vertices;
+    std::vector<GLfloat> normals;
+    std::vector<GLfloat> texCoords;
+
+    std::vector<GLfloat> unitVertices = unitCircleVertices;
+
+    // put side vertices to arrays
+    for (uint32_t i = 0; i < 2; ++i)
+    {
+        GLfloat h = -height / 2.0f + i * height;            // z value; -h/2 to h/2
+        GLfloat t = 1.0f - i;                               // vertical tex coord; 1 to 0
+
+        for (uint32_t j = 0, k = 0; j <= sectorCount; ++j, k += 3)
+        {
+            GLfloat ux = unitVertices[k];
+            GLfloat uy = unitVertices[k + 1];
+            GLfloat uz = unitVertices[k + 2];
+            // position vector
+            vertices.push_back(ux * r);             // vx
+            vertices.push_back(uy * r);             // vy
+            vertices.push_back(h);                  // vz
+            // normal vector
+            normals.push_back(ux);                       // nx
+            normals.push_back(uy);                       // ny
+            normals.push_back(1.0);                       // nz
+            // texture coordinate
+            texCoords.push_back((float)j / sectorCount); // s
+            texCoords.push_back(t);                      // t
+        }
+    }
+
+    int baseCenterIndex = (GLint)vertices.size() / 3;
+    int topCenterIndex = baseCenterIndex + sectorCount + 1;
+
+    // put base and top vertices to arrays
+    for (uint32_t i = 0; i < 2; ++i)
+    {
+        float h = -height / 2.0f + i * height;           // z value; -h/2 to h/2
+        float nz = -1 + i * 2;                           // z value of normal; -1 to 1
+
+        // center point
+        vertices.push_back(0);     vertices.push_back(0);     vertices.push_back(h);
+        normals.push_back(0);      normals.push_back(0);      normals.push_back(nz);
+        texCoords.push_back(0.5f); texCoords.push_back(0.5f);
+
+        for (uint32_t j = 0, k = 0; j < sectorCount; ++j, k += 3)
+        {
+            GLfloat ux = unitVertices[k];
+            GLfloat uy = unitVertices[k + 1];
+            // position vector
+            vertices.push_back(ux * r);             // vx 
+            vertices.push_back(uy * r);             // vy 
+            vertices.push_back(h);                       // vz 
+            // normal vector
+            normals.push_back(0);                        // nx 
+            normals.push_back(0);                        // ny 
+            normals.push_back(nz);                       // nz
+            // texture coordinate
+            texCoords.push_back(-ux * 0.5f + 0.5f);      // s
+            texCoords.push_back(-uy * 0.5f + 0.5f);      // t
+        }
+
+    }
+
+    // indices for side
+    std::vector<uint32_t> indices;
+
+    int k1 = 0;                         // 1st vertex index at base
+    int k2 = sectorCount + 1;           // 1st vertex index at top
+
+    // indices for the side surface
+    for (uint32_t i = 0; i < sectorCount; ++i, ++k1, ++k2)
+    {
+        // 2 triangles per sector
+        // k1 => k1+1 => k2
+        indices.push_back(k1);
+        indices.push_back(k1 + 1);
+        indices.push_back(k2);
+
+        // k2 => k1+1 => k2+1
+        indices.push_back(k2);
+        indices.push_back(k1 + 1);
+        indices.push_back(k2 + 1);
+    }
+    // indices for the base surface
+   //NOTE: baseCenterIndex and topCenterIndices are pre-computed during vertex generation
+    for (uint32_t i = 0, k = baseCenterIndex + 1; i < sectorCount; ++i, ++k)
+    {
+        if (i < sectorCount - 1)
+        {
+            indices.push_back(baseCenterIndex);
+            indices.push_back(k + 1);
+            indices.push_back(k);
+        }
+        else // last triangle
+        {
+            indices.push_back(baseCenterIndex);
+            indices.push_back(baseCenterIndex + 1);
+            indices.push_back(k);
+        }
+    }
+    // indices for the top surface
+    for (uint32_t i = 0, k = topCenterIndex + 1; i < sectorCount; ++i, ++k)
+    {
+        if (i < sectorCount - 1)
+        {
+            indices.push_back(topCenterIndex);
+            indices.push_back(k);
+            indices.push_back(k + 1);
+        }
+        else // last triangle
+        {
+            indices.push_back(topCenterIndex);
+            indices.push_back(k);
+            indices.push_back(topCenterIndex + 1);
+        }
+    }
+    constexpr std::size_t ARRAY_SZ = 300;
+    static GLfloat cylVerts[ARRAY_SZ]{};
+    for (uint32_t i = 0; i < vertices.size(); i++) {
+        cylVerts[i] = vertices[i];
+    }
+    static GLshort cylindices[ARRAY_SZ]{};
+    for (uint32_t i = 0; i < indices.size(); i++) {
+        cylindices[i] = indices[i];
+    }
+
+
+    /*********************************************/
+       // Creates the Vertex Attribute Pointer for the screen coordinates
+  // Creates the Vertex Attribute Pointer for the screen coordinates
+    const GLuint floatsPerVertex = 3; // Number of coordinates per vertex
+    const GLuint floatsPerNormal = 3;
+    const GLuint floatsPerUV = 2;
+
+    // Strides between vertex coordinates is 6 (x, y, r, g, b, a). A tightly packed stride is 0.
+    GLint stride1 = sizeof(float) * (floatsPerVertex);
+    GLint strideTex = sizeof(float) * (floatsPerVertex + floatsPerUV);
+    GLint strideNor = sizeof(float) * (floatsPerVertex + floatsPerNormal);
+
+
+    // Cylinder 
+
+    glGenVertexArrays(1, &mesh.cylVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.cylVao);
+
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(2, mesh.cylVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.cylVbos[0]); // Activates the buffer  
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cylVerts), cylVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU  
+
+    mesh.cyIndices = sizeof(cylindices) / sizeof(cylindices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.cylVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cylindices), cylindices, GL_STATIC_DRAW);
+
+
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride1, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, strideNor, (void*)(sizeof(float) * floatsPerNormal));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, strideTex, (void*)(sizeof(float) * (floatsPerUV)));
+    glEnableVertexAttribArray(2);
+}
+
+int main(int argc, char* argv[])
+{
+
+    if (!initialize(argc, argv, &gWindow))
+        return EXIT_FAILURE;
+
+    // Create the mesh
+    UCreateMesh(gMesh); // Calls the function to create the Vertex Buffer Object
+    cylinderFunc(gMesh);
+    sphereFunc(gMesh);
+
+    if (!UCreateShaderProgram(vertexShaderSource, fragmentShaderSource, gProgramId))
+        return EXIT_FAILURE;
+
+    if (!UCreateShaderProgram(lampVertexShaderSource, lampFragmentShaderSource, gLampProgramId))
+        return EXIT_FAILURE;
+
+    const char* texFilename = "../resources/textures/woodenfloor.jpeg";
+
+    if (!UCreateTexture(texFilename, gTextureFloor))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+
+    texFilename = "../resources/textures/teal.jpeg";
+
+    if (!UCreateTexture(texFilename, gTextureTealL))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+
+    texFilename = "../resources/textures/white.jpg";
+
+    if (!UCreateTexture(texFilename, gTextureWhite))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+
+    texFilename = "../resources/textures/teal.jpeg";
+    if (!UCreateTexture(texFilename, gTextureTealR))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+
+    texFilename = "../resources/textures/rainbow1.jpeg";
+
+    if (!UCreateTexture(texFilename, gTextureCan))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+
+    texFilename = "../resources/textures/white.jpg";
+
+    if (!UCreateTexture(texFilename, gTextureWhiteCup))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+    texFilename = "../resources/textures/white.jpg";
+
+    if (!UCreateTexture(texFilename, gTextureWhiteH))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+    texFilename = "../resources/textures/yellow1.jpg";
+    if (!UCreateTexture(texFilename, gTextureYellowDots))
+    {
+        cout << "Failed to load texture " << texFilename << endl;
+        std::cout << stbi_failure_reason();
+        return EXIT_FAILURE;
+    }
+
+    // tell opengl for each sampler to which texture unit it belongs to (only has to be done once)
+    glUseProgram(gProgramId);
+    // We set the texture as texture unit 0
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 0);
+
+    // Sets the background color of the window to black (it will be implicitely used by glClear)
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // render loop
+    // -----------
+    while (!glfwWindowShouldClose(gWindow))
+    {
+        // per-frame timing
+// --------------------
+        float currentFrame = glfwGetTime();
+        gDeltaTime = currentFrame - gLastFrame;
+        gLastFrame = currentFrame;
+
+        // input
+        // -----
+        processInput(gWindow);
+
+        // Render this frame
+        URender();
+
+        drawEraserCase();
+
+        drawCandle();
+
+        drawCup();
+
+        drawSphere();
+
+        glUseProgram(0);
+
+        // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
+        glfwSwapBuffers(gWindow); // Flips the the back buffer with the front buffer every frame.
+        glfwPollEvents();
+    }
+
+    // Release mesh data
+    destroyMesh(gMesh);
+    UDestroyTexture(gTextureFloor);
+    UDestroyTexture(gTextureTealL);
+    UDestroyTexture(gTextureWhite);
+    UDestroyTexture(gTextureTealR);
+    UDestroyTexture(gTextureCan);
+    UDestroyTexture(gTextureWhiteCup);
+    UDestroyTexture(gTextureWhiteH);
+    UDestroyTexture(gTextureYellowDots);
+
+    // Release shader program
+    UDestroyShaderProgram(gProgramId);
+    UDestroyShaderProgram(gLampProgramId);
+
+    exit(EXIT_SUCCESS);  // Terminates the program successfully
+}
+//--------------------------------------------------------------------------------------------------
+//  initlaize GLFW, GLEW and create a window
+bool  initialize(int argc, char* [], GLFWwindow** window) {
+    // glfw: initialize and configure
+// -------------------------------------------
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+    // glfw window creation
+// -----------------------------------
+    * window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, WINDOW_TITLE, NULL, NULL);
+    if (*window == NULL)
+    {
+        std::cout << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return false;
+    }
+
+    glfwMakeContextCurrent(*window);
+    glfwSetFramebufferSizeCallback(*window, framebuffer_size_callback);
+    glfwSetCursorPosCallback(*window, UMousePositionCallback);
+    glfwSetScrollCallback(*window, UMouseScrollCallback);
+    glfwSetMouseButtonCallback(*window, UMouseButtonCallback);
+
+    // glad: load all OpenGL function pointers
+// ---------------------------------------
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        std::cout << "Failed to initialize GLAD" << std::endl;
+        return false;
+    }
+    return true;
+}
+// process all input: query GLFW whether relevant keys are pressed/released this frame and react accordingly
+// ---------------------------------------------------------------------------------------------------------
+void processInput(GLFWwindow* window)
+{
+    static const float cameraSpeed = 1.5f;
+
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
+
+    // Tie KEY_W and KEY_S to action moving FORWARD AND BACKWARD
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+        gCamera.ProcessKeyboard(FORWARD, gDeltaTime);
+    }
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+    {
+        gCamera.ProcessKeyboard(BACKWARD, gDeltaTime);
+    }
+    // Tie KEY_A and KEY_D to acting moving Left and Right
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+    {
+        gCamera.ProcessKeyboard(LEFT, gDeltaTime); // Left 
+    }
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+    {
+        gCamera.ProcessKeyboard(RIGHT, gDeltaTime);// Right 
+    }
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+    {
+        gCamera.ProcessKeyboard(UP, gDeltaTime);// Right  
+    }
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+    {
+        gCamera.ProcessKeyboard(DOWN, gDeltaTime);// Right  
+    }
+
+}
+// glfw: whenever the window size changed (by OS or user resize) this callback function executes
+// ---------------------------------------------------------------------------------------------
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    // make sure the viewport matches the new window dimensions; note that width and 
+    // height will be significantly larger than specified on retina displays.
+    glViewport(0, 0, width, height);
+}
+void UMousePositionCallback(GLFWwindow* window, double xpos, double ypos) {
+    if (gFirstMouse)
+    {
+        gLastX = xpos;
+        gLastY = ypos;
+        gFirstMouse = false;
+    }
+
+    float xoffset = xpos - gLastX;
+    float yoffset = gLastY - ypos; // reversed since y-coordinates go from bottom to top
+
+    gLastX = xpos;
+    gLastY = ypos;
+
+    gCamera.ProcessMouseMovement(xoffset, yoffset);
+}
+void UMouseScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    gCamera.ProcessMouseScroll(yoffset);
+}
+void UMouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    switch (button)
+    {
+    case GLFW_MOUSE_BUTTON_LEFT:
+    {
+        if (action == GLFW_PRESS)
+            cout << "Left mouse button pressed" << endl;
+        else
+            cout << "Left mouse button released" << endl;
+    }
+    break;
+
+    case GLFW_MOUSE_BUTTON_MIDDLE:
+    {
+        if (action == GLFW_PRESS)
+            cout << "Middle mouse button pressed" << endl;
+        else
+            cout << "Middle mouse button released" << endl;
+    }
+    break;
+
+    case GLFW_MOUSE_BUTTON_RIGHT:
+    {
+        if (action == GLFW_PRESS)
+            cout << "Right mouse button pressed" << endl;
+        else
+            cout << "Right mouse button released" << endl;
+    }
+    break;
+
+    default:
+        cout << "Unhandled mouse button event" << endl;
+        break;
+    }
+}
+void UCreateMesh(GLMesh& mesh) {
+
+
+
+    // set up vertex data 
+    GLfloat planeVerts[] = {
+        // vertices                                     // texture coord
+        // 1st tri 
+       -10.0f,  -1.0f, -10.0f,    1.50f, 0.50f, 1.50f,      0.0f, 0.0f,
+        10.0f,  -1.0f, -10.0f,    0.0f,  0.00f,  0.0f,      1.0f, 0.0f,
+        10.0f,  -1.0f,  10.0f,    0.0f,  0.00f,  0.0f,      1.0f, 1.0f,
+        // 2nd tri
+        10.0f,  -1.0f,  10.0f,    1.50f, 0.5f,  1.50f,      1.0f, 1.0f,
+       -10.0f,  -1.0f,  10.0f,    0.0f,  0.00f,  0.0f,      0.0f, 1.0f,
+       -10.0f,  -1.0f, -10.0f,    0.0f,  0.00f,  0.0f,      0.0f, 0.0f
+
+    };
+
+    GLfloat handleVerts[] = {
+       1.10f,   0.0f,  0.5f,    1.5f,  0.50f, 1.5f,         1.0f, 1.0f, // Top Right Vertex 0
+       1.10f,   0.0f,  0.5f,    0.0f,  0.00f,  0.0f,        1.0f, 0.0f,// Top Right Vertex 1
+       0.75f,   0.0f,  0.5f,    0.0f,  0.00f,  0.0f,        0.0f, 0.0f, // Bottom Right Vertex 2
+       0.75f,   0.0f,  0.5f,    0.0f,  0.00f,  0.0f,        0.0f, 1.0f, // Top Right Vertex 3
+
+       1.10f,   0.0f,  0.70f,   0.50f,  0.50f,  0.50f,      1.0f, 1.0f, // 4
+       1.10f,   0.0f,  0.70f,   0.50f,  0.50f,  0.50f,      1.0f, 0.0f, // 5
+       0.75f,   0.0f,  0.70f,   0.50f,  0.50f,  0.50f,      0.0f, 0.0f,  // 6
+       0.75f,   0.0f,  0.70f,   0.50f,  0.50f,  0.50f,      0.0f, 1.0f, // 7
+
+    };
+
+    GLfloat barVerts[] = {
+
+        1.0f,   0.0f,  0.5f,       0.50f,  0.50f,  0.50f,   1.0f, 1.0f, // Top Right Vertex 0
+        1.0f,   0.0f,  0.5f,       0.50f,  0.50f,  0.50f,   1.0f, 0.0f,// Top Right Vertex 1
+        1.10f,  0.0f,  0.5f,       0.50f,  0.50f,  0.50f,   0.0f, 0.0f, // Bottom Right Vertex 2
+        1.10f,  0.0f,  0.5f,       0.50f,  0.50f,  0.50f,   0.0f, 1.0f, // Top Right Vertex 3
+
+        1.0f,   0.0f,  -0.70f,     0.50f,  0.50f,  0.50f,   1.0f, 1.0f, // 4
+        1.0f,   0.0f,  -0.70f,     0.50f,  0.50f,  0.50f,   1.0f, 0.0f, // 5
+        1.10f,  0.0f,  -0.70f,     0.50f,  0.50f,  0.50f,   0.0f, 0.0f,  // 6
+        1.10f,  0.0f,  -0.70f,     0.50f,  0.50f,  0.50f,   0.0f, 1.0f, // 7
+    };
+    GLfloat handle2Verts[] = {
+
+        1.10f,   0.0f,  -0.5f,   0.50f,  0.50f,  0.50f,   1.0f, 1.0f, // Top Right Vertex 0
+        1.10f,   0.0f,  -0.5f,  0.50f,  0.50f,  0.50f,    1.0f, 0.0f,// Top Right Vertex 1
+        0.75f,   0.0f,  -0.5f,  0.50f,  0.50f,  0.50f,    0.0f, 0.0f, // Bottom Right Vertex 2
+        0.75f,   0.0f,  -0.5f,   0.50f,  0.50f,  0.50f,   0.0f, 1.0f, // Top Right Vertex 3
+
+        1.10f,  0.0f,  -0.70f,  0.50f,  0.50f,  0.50f,   1.0f, 1.0f, // 4
+        1.10f,  0.0f,  -0.70f,  0.50f,  0.50f,  0.50f,   1.0f, 0.0f, // 5
+        0.75f,  0.0f,  -0.70f,  0.50f,  0.50f,  0.50f,   0.0f, 0.0f,  // 6
+        0.75f,  0.0f,  -0.70f,  0.50f,  0.50f,  0.50f,   0.0f, 1.0f, // 7
+    };
+
+    GLfloat candleVerts[] =
+    {
+        // positions			    //testure Coordinates
+        // Front 
+        -0.5f,  -0.5f, 0.5f,		     0.0f, 0.0f,
+         0.5f,  -0.5f, 0.5f,		     1.0f, 0.0f,
+         0.0f,  9.0f,  0.0f,		     0.5f, 1.0f,
+
+         // Back
+        -0.5f,  -0.5f, -0.5f,		     0.0f, 0.0f,
+         0.5f,  -0.5f, -0.5f,		     1.0f, 0.0f,
+         0.0f,   9.0f,  0.0f,	         0.5f, 1.0f,
+
+         //Left 
+         -0.5f,  -0.5f, -0.5f,		     0.0f, 0.0f,
+         -0.5f,  -0.5f,  0.5f,		     1.0f, 0.0f,
+          0.0f,   9.0f,   0.0f,		     0.5f, 1.0f,
+
+          // Right
+           0.5f,  -0.5f, -0.5f,		    0.0f, 0.0f,
+           0.5f,  -0.5f, 0.5f,		    1.0f, 0.0f,
+           0.0f,   9.0f, 0.0f,	        0.5f, 1.0f,
+
+           // bottom 1
+           -0.5f,  -0.5f, 0.5f,		    0.0f, 0.0f,
+           0.5f,  -0.5f, 0.5f,		    1.0f, 0.0f,
+           0.5f,  -0.5f, -0.5f,	        0.5f, 1.0f,
+
+           // bottom 2
+          -0.5f,  -0.5f, -0.5f,		    0.0f, 0.0f,
+          -0.5f,  -0.5f, 0.5f,		    1.0f, 0.0f,
+           0.5f,  -0.5f, -0.5f,		    0.5f, 1.0f
+    };
+
+    GLfloat leftVerts[] = {
+       -0.25f,  0.5f, 0.0f,     1.50f,  1.00f,  1.50f,      1.0f, 1.0f, // Top Right Vertex 0
+       -0.25f, -0.5f, 0.0f,     0.50f,  0.00f,  0.50f,      1.0f, 0.0f,// Top Right Vertex 1
+       -1.5f,  -0.5f, 0.0f,     0.50f,  0.00f,  0.50f,      0.0f, 0.0f, // Bottom Right Vertex 2
+       -1.5f,   0.5f, 0.0f,     0.50f,  0.00f,  0.50f,      0.0f, 1.0f, // Top Right Vertex 3
+
+       -0.25f, -0.5f, -2.0f,    0.50f,  0.00f,  1.50f,      1.0f, 1.0f, // 4
+       -0.25f,  0.5f, -2.0f,    0.50f,  0.00f,  0.50f,      1.0f, 0.0f, // 5
+       -1.5f,   0.5f, -2.0f,    0.50f,  0.00f,  0.50f,      0.0f, 0.0f,  // 6
+       -1.5f,  -0.5f, -2.0f,    0.50f,  0.00f,  0.50f,      0.0f, 1.0f, // 7
+    };
+    GLfloat centerVerts[] = {
+        // Vertex Positions    // Colors (r,g,b,a)
+         0.25f,  0.5f, 0.0f,    1.0f, 1.0f, // Top Right Vertex 0
+         0.25f, -0.5f, 0.0f,    1.0f, 0.0f, // Bottom Right Vertex 1
+        -0.25f, -0.5f, 0.0f,    0.0f, 0.0f, // Bottom Left Vertex 2
+        -0.25f,  0.5f, 0.0f,    0.0f, 1.0f, // Top Left Vertex 3
+
+         0.25f, -0.5f, -2.0f,  1.0f, 1.0f, // 4 br  right
+         0.25f,  0.5f, -2.0f,  1.0f, 0.0f,//  5 tl  right
+        -0.25f,  0.5f, -2.0f,  0.0f, 0.0f,//  6 tl  top
+        -0.25f, -0.5f, -2.0f,  0.0f, 1.0f,  //  7 bl back
+
+    };
+    GLfloat rightVerts[] = {
+        2.5f,  0.5f, 0.0f,      0.50f,  1.00f,  0.50f,      1.0f, 1.0f, // Top Right Vertex 0
+        2.5f, -0.5f, 0.0f,      0.50f,  0.00f,  0.50f,      1.0f, 0.0f, // Top Right Vertex 1
+        0.25f, -0.5f, 0.0f,     0.50f,  0.00f,  0.50f,      0.0f, 0.0f,// Bottom Right Vertex 2
+        0.25f,  0.5f, 0.0f,     0.50f,  0.00f,  0.50f,      0.0f, 1.0f, // Top Right Vertex 3
+
+        2.5f, -0.5f, -2.0f,     0.50f,  0.00f,  0.50f,      1.0f, 1.0f,// 4
+        2.5f,  0.5f, -2.0f,     0.50f,  0.00f,  0.50f,      1.0f, 0.0f, // 5
+        0.25f,  0.5f, -2.0f,    0.50f,  0.00f,  0.50f,      0.0f, 0.0f,// 6
+        0.25f, -0.5f, -2.0f,    0.50f,  0.00f,  0.50f,      0.0f, 1.0f,  // 7
+    };
+
+
+    // Index data to share position data
+    GLushort cubeIndices[] = {
+    0, 1, 3,  // Triangle 1
+    1, 2, 3,   // Triangle 2
+    0, 1, 4,  // Triangle 3
+    0, 4, 5,  // Triangle 4
+    0, 5, 6, // Triangle 5 top
+    0, 3, 6,  // Triangle 6 top
+    4, 5, 6, // Triangle 7
+    4, 6, 7, // Triangle 8
+    2, 3, 6, // Triangle 9
+    2, 6, 7, // Triangle 10
+    1, 4, 7, // Triangle 11
+    1, 2, 7, // Triangle 12
+    };
+
+    // Creates the Vertex Attribute Pointer for the screen coordinates
+    const GLuint floatsPerVertex = 3; // Number of coordinates per vertex
+    const GLuint floatsPerNormal = 3;
+    const GLuint floatsPerUV = 2;
+
+    // Strides between vertex coordinates is 6 (x, y, r, g, b, a). A tightly packed stride is 0.
+    GLint strideTex = sizeof(float) * (floatsPerVertex + floatsPerUV);
+    GLint stride = sizeof(float) * (floatsPerVertex + floatsPerNormal + floatsPerUV);
+    /*******************************************************************************************************************/
+////////////////////////// PLANE 
+
+    mesh.pvertices = sizeof(planeVerts) / (sizeof(planeVerts[0]) * (floatsPerVertex + floatsPerNormal + floatsPerUV)); ;
+    glGenVertexArrays(1, &mesh.planeVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.planeVao);
+
+    glGenBuffers(1, &mesh.planeVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.planeVbos); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(planeVerts), planeVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * (floatsPerVertex + floatsPerNormal)));
+    glEnableVertexAttribArray(2);
+
+    /**************************************************************************************************************/
+    /////////////////////// CANDLE 
+
+    mesh.canvertices = 18;
+    glGenVertexArrays(1, &mesh.candleVao); // we can also generate multiple VAOs or buffers at the same time  
+    glGenBuffers(1, &mesh.candleVbos);
+    glBindVertexArray(mesh.candleVao);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.candleVbos); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(candleVerts), candleVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, strideTex, 0);
+    glEnableVertexAttribArray(0);
+
+    // glVertexAttribPointer(1, floatsPerColor, GL_FLOAT, GL_FALSE, strideTex, (char*)(sizeof(float) * floatsPerVertex)); 
+     // glEnableVertexAttribArray(1); 
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, strideTex, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(2);
+
+    /*******************************************************************************************************************/
+////////////////////////// Handle
+    glGenVertexArrays(1, &mesh.handleVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.handleVao);
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(2, mesh.handleVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.handleVbos[0]); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(handleVerts), handleVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    mesh.cIndices = sizeof(cubeIndices) / sizeof(cubeIndices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.handleVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * (floatsPerVertex + floatsPerNormal)));
+    glEnableVertexAttribArray(2);
+
+    /**************************************************************************/
+    // /////////////// Handle 2
+    glGenVertexArrays(1, &mesh.handle2Vao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.handle2Vao);
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(1, &mesh.handle2Vbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.handle2Vbos); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(handle2Verts), handle2Verts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    mesh.cIndices = sizeof(cubeIndices) / sizeof(cubeIndices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.handleVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * (floatsPerVertex + floatsPerNormal)));
+    glEnableVertexAttribArray(2);
+
+    /*******************************************************************************************************************/
+////////////////////////// bar
+    glGenVertexArrays(1, &mesh.barVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.barVao);
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(1, &mesh.barVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.barVbos); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(barVerts), barVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    mesh.cIndices = sizeof(cubeIndices) / sizeof(cubeIndices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.handleVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * (floatsPerVertex + floatsPerNormal)));
+    glEnableVertexAttribArray(2);
+
+
+    /*******************************************************************************************************************/
+////////////////////////// LEFT
+    glGenVertexArrays(1, &mesh.leftVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.leftVao);
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(1, &mesh.leftVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.leftVbos); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(leftVerts), leftVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    mesh.cIndices = sizeof(cubeIndices) / sizeof(cubeIndices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.handleVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * (floatsPerVertex + floatsPerNormal)));
+    glEnableVertexAttribArray(2);
+
+    /*******************************************************************************************************************/
+    ////////////////////////// CENTER
+    glGenVertexArrays(1, &mesh.centerVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.centerVao);
+    // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(1, &mesh.centerVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.centerVbos); // Activates the buffer 
+    glBufferData(GL_ARRAY_BUFFER, sizeof(centerVerts), centerVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU 
+
+    mesh.cIndices = sizeof(cubeIndices) / sizeof(cubeIndices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.handleVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, strideTex, 0);
+    glEnableVertexAttribArray(0);
+
+    //glVertexAttribPointer(1, floatsPerColor, GL_FLOAT, GL_FALSE, strideTex, (char*)(sizeof(float) * floatsPerVertex));
+    //glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, strideTex, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(2);
+    /*******************************************************************************************************************/
+    ///////////// RIGHT
+    glGenVertexArrays(1, &mesh.rightVao); // we can also generate multiple VAOs or buffers at the same time  
+    glBindVertexArray(mesh.rightVao);
+
+    // RIGHT // Create 2 buffers: first one for the vertex data; second one for the indices
+    glGenBuffers(1, &mesh.rightVbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.rightVbos); // Activates the buffer  
+    glBufferData(GL_ARRAY_BUFFER, sizeof(rightVerts), rightVerts, GL_STATIC_DRAW); // Sends vertex or coordinate data to the GPU  
+
+    mesh.cIndices = sizeof(cubeIndices) / sizeof(cubeIndices[0]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.handleVbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    // Creates the Vertex Attribute Pointers
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerNormal, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, floatsPerUV, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * (floatsPerVertex + floatsPerNormal)));
+    glEnableVertexAttribArray(2);
+
+    /***********************************************************************************************************************/
+}
+void destroyMesh(GLMesh& mesh)
+{
+    glDeleteVertexArrays(1, &mesh.planeVao);
+    glDeleteBuffers(1, &mesh.planeVbos);
+
+    glDeleteVertexArrays(1, &mesh.leftVao);
+    glDeleteBuffers(1, &mesh.leftVbos);
+
+    glDeleteVertexArrays(1, &mesh.centerVao);
+    glDeleteBuffers(1, &mesh.centerVbos);
+
+    glDeleteVertexArrays(1, &mesh.rightVao);
+    glDeleteBuffers(1, &mesh.rightVbos);
+
+    glDeleteVertexArrays(1, &mesh.cylVao);
+    glDeleteBuffers(2, mesh.cylVbos);
+
+    glDeleteVertexArrays(1, &mesh.handleVao);
+    glDeleteBuffers(2, mesh.handleVbos);
+
+    glDeleteVertexArrays(1, &mesh.sphereVao);
+    glDeleteBuffers(2, mesh.sphereVbos);
+
+}
+void URender() {
+    // Enable z-depth
+    glEnable(GL_DEPTH_TEST);
+
+    // render
+ // ------
+        // Clear the background and change the background color to black
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+
+    // Set the shader to be used
+    glUseProgram(gProgramId);
+
+    glm::mat4 projection, view, model;
+
+    model = glm::mat4(1.0f);
+
+
+    // camera/view transformation
+    view = gCamera.GetViewMatrix();
+    // model = translation * rotation * scale;
+
+    // Creates a perspective projection
+    projection = glm::perspective(glm::radians(gCamera.Zoom), (GLfloat)SCR_WIDTH / (GLfloat)SCR_HEIGHT, 0.1f, 100.0f);
+
+    // Retrieves and passes transform matrices to the Shader program
+    GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+    GLint viewLoc = glGetUniformLocation(gProgramId, "view");
+    GLint projLoc = glGetUniformLocation(gProgramId, "projection");
+
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+    glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+    // Reference matrix uniforms from the Cube Shader program for the cub color, light color, light position, and camera position
+    GLint objectColorLoc = glGetUniformLocation(gProgramId, "objectColor");
+    GLint lightColorLoc = glGetUniformLocation(gProgramId, "lightColor");
+    GLint lightPositionLoc = glGetUniformLocation(gProgramId, "lightPos");
+    GLint viewPositionLoc = glGetUniformLocation(gProgramId, "viewPosition");
+
+    // Pass color, light, and camera data to the Cube Shader program's corresponding uniforms
+    glUniform3f(objectColorLoc, gObjectColor.r, gObjectColor.g, gObjectColor.b);
+    glUniform3f(lightColorLoc, gLightColor.r, gLightColor.g, gLightColor.b);
+    glUniform3f(lightPositionLoc, gLightPosition.x, gLightPosition.y, gLightPosition.z);
+    const glm::vec3 cameraPosition = gCamera.Position;
+    glUniform3f(viewPositionLoc, cameraPosition.x, cameraPosition.y, cameraPosition.z);
+
+    GLint UVScaleLoc = glGetUniformLocation(gProgramId, "uvScale");
+    glUniform2fv(UVScaleLoc, 1, glm::value_ptr(gUVScale));
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gTextureFloor);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 0);
+
+    glBindVertexArray(gMesh.planeVao);
+    glDrawArrays(GL_TRIANGLES, 0, gMesh.pvertices);
+
+    // Draw Lamp 
+
+    glUseProgram(gLampProgramId);
+    //Transform the smaller cube used as a visual que for the light source
+    model = glm::translate(glm::mat4(1.0f), gLightPosition) * glm::scale(glm::mat4(1.0f), gLightScale);
+
+    // Reference matrix uniforms from the Lamp Shader program
+    GLint modelLoc1 = glGetUniformLocation(gLampProgramId, "model");
+    GLint viewLoc1 = glGetUniformLocation(gLampProgramId, "view");
+    GLint projLoc1 = glGetUniformLocation(gLampProgramId, "projection");
+    // Pass matrix data to the Lamp Shader program's matrix uniforms
+    glUniformMatrix4fv(modelLoc1, 1, GL_FALSE, glm::value_ptr(model));
+    glUniformMatrix4fv(viewLoc1, 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(projLoc1, 1, GL_FALSE, glm::value_ptr(projection));
+    glDrawArrays(GL_TRIANGLES, 0, gMesh.pvertices);
+
+    // Deactivate the Vertex Array Object and shader program
+    glBindVertexArray(0);
+
+}
+
+void drawEraserCase() {
+
+
+    glUseProgram(gProgramId);
+    // Reference matrix uniforms from the Cube Shader program for the cub color, light color, light position, and camera position
+    GLint objectColorLoc = glGetUniformLocation(gProgramId, "objectColor");
+    GLint lightColorLoc = glGetUniformLocation(gProgramId, "lightColor");
+    GLint lightPositionLoc = glGetUniformLocation(gProgramId, "lightPos");
+    GLint viewPositionLoc = glGetUniformLocation(gProgramId, "viewPosition");
+
+    // Pass color, light, and camera data to the Cube Shader program's corresponding uniforms
+    glUniform3f(objectColorLoc, gObjectColor.r, gObjectColor.g, gObjectColor.b);
+    glUniform3f(lightColorLoc, gLightColor.r, gLightColor.g, gLightColor.b);
+    glUniform3f(lightPositionLoc, gLightPosition.x, gLightPosition.y, gLightPosition.z);
+
+    GLint UVScaleLoc = glGetUniformLocation(gProgramId, "uvScale");
+    glUniform2fv(UVScaleLoc, 1, glm::value_ptr(gUVScale));
+
+    glm::mat4 model, scale, rotation, translation;
+    model = glm::mat4(1.0f);
+    // scale = glm::scale(model, glm::vec3(2.5, 2.5, 2.5));
+   // rotation = glm::rotate(model, 0.0f, glm::vec3(0.0, 0.0f, 0.0f));
+    model = glm::translate(model, glm::vec3(-5.0f, -0.50f, 0.0f));
+    //model = translation * rotation * scale;
+
+    GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+    // Left
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, gTextureTealL);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 1);
+
+    glBindVertexArray(gMesh.leftVao);
+    glDrawElements(GL_TRIANGLES, gMesh.cIndices, GL_UNSIGNED_SHORT, NULL); // Draws the triangle 
+
+    // Center
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, gTextureWhite);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 2);
+
+    glBindVertexArray(gMesh.centerVao);
+    glDrawElements(GL_TRIANGLES, gMesh.cIndices, GL_UNSIGNED_SHORT, NULL); // Draws the triangle 
+
+
+    // Right
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, gTextureTealR);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 3);
+
+    glBindVertexArray(gMesh.rightVao);
+    glDrawElements(GL_TRIANGLES, gMesh.cIndices, GL_UNSIGNED_SHORT, NULL); // Draws the triangle 
+
+    // llight
+    glUseProgram(gLampProgramId);
+    //Transform the smaller cube used as a visual que for the light source
+    model = glm::translate(glm::mat4(1.0f), gLightPosition) * glm::scale(glm::mat4(1.0f), gLightScale);
+
+    // Reference matrix uniforms from the Lamp Shader program
+    GLint modelLoc1 = glGetUniformLocation(gLampProgramId, "model");
+
+    // Pass matrix data to the Lamp Shader program's matrix uniforms
+    glUniformMatrix4fv(modelLoc1, 1, GL_FALSE, glm::value_ptr(model));
+    glBindVertexArray(gMesh.planeVao);
+    glDrawArrays(GL_TRIANGLES, 0, gMesh.pvertices);
+
+    glBindVertexArray(0);
+
+}
+
+void drawCandle() {
+
+    glUseProgram(gProgramId);
+    glm::mat4 model, scale, rotation, translation;
+    model = glm::mat4(1.0f);
+    scale = glm::scale(model, glm::vec3(0, 0, 0));
+    rotation = glm::rotate(model, 0.0f, glm::vec3(0.0, 0.0f, 0.0f));
+    translation = glm::translate(model, glm::vec3(0.0f, -0.50f, -5.0f));
+    model = translation;
+
+    GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+    // bind textures on corresponding texture units
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, gTextureCan);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 4);
+
+    // Activate the VBOs contained within the mesh's VAO
+    glBindVertexArray(gMesh.candleVao);
+    glDrawArrays(GL_TRIANGLES, 0, gMesh.canvertices);
+
+    glBindVertexArray(0);
+}
+
+
+
+void drawCup() {
+
+    glUseProgram(gProgramId);
+
+    // Reference matrix uniforms from the Cube Shader program for the cub color, light color, light position, and camera position
+    GLint objectColorLoc = glGetUniformLocation(gProgramId, "objectColor");
+    GLint lightColorLoc = glGetUniformLocation(gProgramId, "lightColor");
+    GLint lightPositionLoc = glGetUniformLocation(gProgramId, "lightPos");
+    GLint viewPositionLoc = glGetUniformLocation(gProgramId, "viewPosition");
+
+    // Pass color, light, and camera data to the Cube Shader program's corresponding uniforms
+    glUniform3f(objectColorLoc, gObjectColor.r, gObjectColor.g, gObjectColor.b);
+    glUniform3f(lightColorLoc, gLightColor.r, gLightColor.g, gLightColor.b);
+    glUniform3f(lightPositionLoc, gLightPosition.x, gLightPosition.y, gLightPosition.z);
+
+    GLint UVScaleLoc = glGetUniformLocation(gProgramId, "uvScale");
+    glUniform2fv(UVScaleLoc, 1, glm::value_ptr(gUVScale));
+
+    glm::mat4 model, scale, rotation, translation;
+    model = glm::mat4(1.0f);
+    scale = glm::scale(model, glm::vec3(2.0, 2.0, 2.0));
+    rotation = glm::rotate(model, 55.0f, glm::vec3(1.0, 0.0f, 0.0f));
+    translation = glm::translate(model, glm::vec3(5.0f, 1.1f, 0.0f));
+    model = translation * rotation * scale;
+
+    GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+    glUseProgram(gProgramId);
+
+    // cylinder 
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, gTextureWhiteCup);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 5);
+
+    glBindVertexArray(gMesh.cylVao);
+    glDrawElements(GL_TRIANGLES, gMesh.cyIndices, GL_UNSIGNED_SHORT, NULL);
+
+    //scale = glm::scale(model, glm::vec3(0.5, 0.5, 0.5)); 
+    //rotation = glm::rotate(model, 0.0f, glm::vec3(1.0, 0.0f, 0.0f)); 
+   // translation = glm::translate(model, glm::vec3(2.0f, -1.0f, 0.5f)); 
+   // model = translation * rotation;
+    scale = glm::scale(model, glm::vec3(0.25, 0.25, 0.25));
+
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+    glUseProgram(gProgramId);
+
+    // Handle
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, gTextureWhiteH);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 6);
+
+    glBindVertexArray(gMesh.handleVao);
+    glDrawElements(GL_TRIANGLES, gMesh.cIndices, GL_UNSIGNED_SHORT, NULL);
+
+    glBindVertexArray(gMesh.barVao);
+    glDrawElements(GL_TRIANGLES, gMesh.cIndices, GL_UNSIGNED_SHORT, NULL);
+
+    glBindVertexArray(gMesh.handle2Vao);
+    glDrawElements(GL_TRIANGLES, gMesh.cIndices, GL_UNSIGNED_SHORT, NULL);
+
+    // llight
+    glUseProgram(gLampProgramId);
+    //Transform the smaller cube used as a visual que for the light source
+    model = glm::translate(glm::mat4(1.0f), gLightPosition) * glm::scale(glm::mat4(1.0f), gLightScale);
+
+    // Reference matrix uniforms from the Lamp Shader program
+    GLint modelLoc1 = glGetUniformLocation(gLampProgramId, "model");
+
+    // Pass matrix data to the Lamp Shader program's matrix uniforms
+    glUniformMatrix4fv(modelLoc1, 1, GL_FALSE, glm::value_ptr(model));
+    glBindVertexArray(gMesh.planeVao);
+    glDrawArrays(GL_TRIANGLES, 0, gMesh.pvertices);
+
+    glBindVertexArray(0);
+}
+
+void drawSphere() {
+
+    glUseProgram(gProgramId);
+
+    glm::mat4 model, scale, rotation, translation;
+    model = glm::mat4(1.0f);
+    scale = glm::scale(model, glm::vec3(1.25, 1.25, 1.25));
+    rotation = glm::rotate(model, 55.0f, glm::vec3(1.0, 0.0f, 0.0f));
+    translation = glm::translate(model, glm::vec3(1.5f, 0.0f, 5.0f));
+    model = translation * rotation * scale;
+
+
+    GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+    glUseProgram(gProgramId);
+
+
+    // Sphere
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_2D, gTextureYellowDots);
+    glUniform1i(glGetUniformLocation(gProgramId, "uTexture"), 7);
+
+    glBindVertexArray(gMesh.sphereVao);
+    glDrawElements(GL_TRIANGLES, gMesh.sIndices, GL_UNSIGNED_SHORT, NULL);
+
+}
+
+bool UCreateShaderProgram(const char* vtxShaderSource, const char* fragShaderSource, GLuint& programId) {
+
+    int success = 0;
+    char infoLog[512];
+
+    // vertex shader 
+       // Create a Shader program object.
+    programId = glCreateProgram();
+
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+
+    glShaderSource(vertexShader, 1, &vtxShaderSource, NULL);
+    glShaderSource(fragmentShader, 1, &fragShaderSource, NULL);
+
+    glCompileShader(vertexShader);
+    // check for shader compile errors
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+        std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+
+        return false;
+    }
+
+    glCompileShader(fragmentShader);
+    // check for shader compile errors
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+        std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+        return false;
+    }
+
+    //programId / shader progrm / link shaders 
+    glAttachShader(programId, vertexShader);
+    glAttachShader(programId, fragmentShader);
+    glLinkProgram(programId);
+
+    // check for linking errors
+    glGetProgramiv(programId, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(programId, 512, NULL, infoLog);
+        std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+        return false;
+    }
+
+    glUseProgram(programId);     // Uses the shader program
+
+    return true;
+}
+void UDestroyShaderProgram(GLuint programId)
+{
+    glDeleteProgram(programId);
+}
+bool UCreateTexture(const char* filename, GLuint& textureId)
+{
+    int width, height, channels;
+    unsigned char* image = stbi_load(filename, &width, &height, &channels, 0);
+    if (image)
+    {
+        flipImageVertically(image, width, height, channels);
+
+        glGenTextures(1, &textureId);
+        glBindTexture(GL_TEXTURE_2D, textureId);
+
+        // set the texture wrapping parameters
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        // set texture filtering parameters
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        if (channels == 3)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, image);
+        else if (channels == 4)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+        else
+        {
+            cout << "Not implemented to handle image with " << channels << " channels" << endl;
+            return false;
+        }
+
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        stbi_image_free(image);
+        glBindTexture(GL_TEXTURE_2D, 0); // Unbind the texture 
+
+        return true;
+    }
+
+    // Error loading the image
+    return false;
+}
+
+void UDestroyTexture(GLuint textureId)
+{
+    glGenTextures(1, &textureId);
+}
+
